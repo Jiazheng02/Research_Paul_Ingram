@@ -1,91 +1,64 @@
 from pptx import Presentation
-from typing import List, Tuple, Dict, Optional
 from NodesExtraction import extract_node_boxes
 from LinesExtraction import extract_lines
 
-def calculate_distance(point1: Tuple[float, float], point2: Tuple[float, float]) -> float:
-    """Calculate Euclidean distance between two points."""
-    return ((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2) ** 0.5
+def matching_lines_nodes(slide, slide_num):
+    """
+    Matches each line shape's start and end points to the nearest text box (node)
+    within a given slide.
 
-def create_node_mappings(node_boxes: List[Tuple]) -> Tuple[Dict[str, Tuple], Dict[str, int]]:
-    """
-    Create mappings for node boxes to their coordinates and order.
-    
     Args:
-        node_boxes: List of node box tuples (_, top, left, right, bottom, text)
-        
+        slide: The slide object from the PowerPoint presentation.
+        slide_num (int): The slide number.
+
     Returns:
-        Tuple containing:
-        - node_map: Dictionary mapping text to bounding box coordinates
-        - node_order: Dictionary mapping text to index order
+        tuple:
+            - sorted_edges (list): A list of tuples (from_text, to_text) representing the matched 
+              connections between text boxes based on line positions, sorted based on `node_boxes` order.
+            - respondent (str): The top-leftmost text box, often used as an identifier for the slide.
+            - line_count (int): The total number of line shapes detected on the slide.
     """
-    node_map = {}
-    node_order = {}
-    
+    edges = []  # Stores matched edges (connections) between text boxes
+    node_boxes, respondent, node_count = extract_node_boxes(slide, slide_num)  # Extract nodes with bounding box coordinates
+    lines, line_count = extract_lines(slide)  # Extract lines from the slide and count them
+
+    # Create mappings from node_boxes
+    node_map = {}  # Maps text → (top, left, right, bottom)
+    node_order = {}  # Maps text → index (ranking order)
+
     for idx, (_, top, left, right, bottom, text) in enumerate(node_boxes):
-        node_map[text] = (top, left, right, bottom)
-        node_order[text] = idx
-        
-    return node_map, node_order
+        node_map[text] = (top, left, right, bottom)  # Store bounding box coordinates for each text label
+        node_order[text] = idx  # Assign index based on sorted order
 
-def find_closest_nodes(
-    line_start: Tuple[float, float],
-    line_end: Tuple[float, float],
-    node_map: Dict[str, Tuple]
-) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Find the closest nodes to the start and end points of a line.
-    
-    Args:
-        line_start: (x, y) coordinates of line start point
-        line_end: (x, y) coordinates of line end point
-        node_map: Dictionary mapping text to bounding box coordinates
-        
-    Returns:
-        Tuple of (from_text, to_text) representing closest nodes
-    """
-    from_text, to_text = None, None
-    min_distance_from = float("inf")
-    min_distance_to = float("inf")
-    
-    for text, (top, left, right, bottom) in node_map.items():
-        center_x = (left + right) / 2
-        center_y = (top + bottom) / 2
-        
-        dist_from = calculate_distance((center_x, center_y), line_start)
-        dist_to = calculate_distance((center_x, center_y), line_end)
-        
-        if dist_from < min_distance_from:
-            from_text = text
-            min_distance_from = dist_from
-            
-        if dist_to < min_distance_to:
-            to_text = text
-            min_distance_to = dist_to
-            
-    return from_text, to_text
-
-def create_and_sort_edges(
-    lines: Dict,
-    node_map: Dict[str, Tuple],
-    node_order: Dict[str, int]
-) -> List[Tuple[str, str]]:
-    """
-    Create and sort edges based on line positions and node order.
-    
-    Args:
-        lines: Dictionary of line coordinates
-        node_map: Dictionary mapping text to bounding box coordinates
-        node_order: Dictionary mapping text to index order
-        
-    Returns:
-        List of sorted edges as (from_text, to_text) tuples
-    """
-    edges = []
-    
+    # Iterate through all detected lines
     for line_id, (x1, y1, x2, y2) in lines.items():
-        from_text, to_text = find_closest_nodes((x1, y1), (x2, y2), node_map)
-        
+        from_text, to_text = None, None  # Initialize the closest text boxes for each line
+        min_distance_from = float("inf")  # Track the minimum distance for the line's start point
+        min_distance_to = float("inf")  # Track the minimum distance for the line's end point
+
+        # Iterate over all nodes to find the closest match for both start and end points
+        for text, (top, left, right, bottom) in node_map.items():
+            # Compute the center point of the text box
+            center_x = (left + right) / 2
+            center_y = (top + bottom) / 2
+
+            # Calculate Euclidean distances between the line endpoints and the text box center
+            dist_from = ((center_x - x1) ** 2 + (center_y - y1) ** 2) ** 0.5
+            dist_to = ((center_x - x2) ** 2 + (center_y - y2) ** 2) ** 0.5
+
+            # Update the closest matching text box for the start point
+            if dist_from < min_distance_from:
+                from_text = text
+                min_distance_from = dist_from
+
+            # Update the closest matching text box for the end point
+            if dist_to < min_distance_to:
+                to_text = text
+                min_distance_to = dist_to
+
+        # Ensure a valid connection (avoid self-connections)
+        # Reorder nodes to ensure `from_text` appears lower (has a larger Y-coordinate)
+        # PowerPoint uses an inverted Y-axis, meaning larger Y values are lower on the slide
         if from_text and to_text and from_text != to_text:
             from_top, _, _, from_bottom = node_map[from_text]
             to_top, _, _, to_bottom = node_map[to_text]
